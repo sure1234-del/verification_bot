@@ -1,224 +1,227 @@
 import json
 import os
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 
 BOT_TOKEN = "8680097194:AAF7_crZONNEZ7WhjmGg4nZq4HOaJ3rXVsk"
-ADMIN_ID = 7209486623
+PROFESSOR_ID = 7209486623
 
+AVAILABLE_COURSE_GROUP = "https://t.me/uoscli"
 BACKUP_CHANNEL = "https://t.me/uoscli"
 
-DB_FILE = "users.json"
+# ---------- DATABASE ----------
 
-waiting_message = {}
-
-def load_users():
-    if not os.path.exists(DB_FILE):
+def load_json(file):
+    if not os.path.exists(file):
         return {}
-    with open(DB_FILE,"r") as f:
+    with open(file,'r') as f:
         return json.load(f)
 
-def save_users(data):
-    with open(DB_FILE,"w") as f:
+def save_json(file,data):
+    with open(file,'w') as f:
         json.dump(data,f,indent=4)
 
-users = load_users()
+users = load_json("users.json")
+courses = load_json("courses.json")
+
+# ---------- LOG SYSTEM ----------
+
+def log_event(text):
+    logs = []
+    if os.path.exists("logs.json"):
+        with open("logs.json","r") as f:
+            logs=json.load(f)
+
+    logs.append({
+        "time":str(datetime.now()),
+        "event":text
+    })
+
+    with open("logs.json","w") as f:
+        json.dump(logs,f,indent=4)
 
 # ---------- START ----------
 
 async def start(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    button = KeyboardButton("Verify Phone 📱",request_contact=True)
-
-    keyboard = [
-        [button],
-        ["Join Backup Channel 📢"],
-        ["My Courses 📚","Available Courses 🧭"],
-        ["Contact Professor 🎓"]
+    keyboard=[
+        [InlineKeyboardButton("📱 Verify Phone",callback_data="verify")],
+        [InlineKeyboardButton("📚 My Courses",callback_data="mycourses")],
+        [InlineKeyboardButton("📘 Available Courses",url=AVAILABLE_COURSE_GROUP)],
+        [InlineKeyboardButton("📢 Join Backup Channel",url=BACKUP_CHANNEL)],
+        [InlineKeyboardButton("💳 Payment",callback_data="payment")],
+        [InlineKeyboardButton("🎓 Contact Professor",callback_data="contact")]
     ]
 
-    markup = ReplyKeyboardMarkup(keyboard,resize_keyboard=True)
-
     await update.message.reply_text(
-        "👋 Welcome to Course Verification System\n\n"
-        "📌 Steps to access courses:\n"
-        "1️⃣ Join backup channel\n"
-        "2️⃣ Verify phone number\n"
-        "3️⃣ Wait for approval\n\n"
-        "Your learning journey begins here 🚀",
-        reply_markup=markup
+        "🎓 Welcome to Professor Learning System\n\n"
+        "Please complete verification to access courses.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ---------- PHONE VERIFY ----------
+# ---------- VERIFY ----------
 
-async def contact_handler(update:Update,context:ContextTypes.DEFAULT_TYPE):
+async def verify(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    user = update.message.from_user
-    phone = update.message.contact.phone_number
+    query=update.callback_query
+    await query.answer()
 
-    if not phone.startswith("+91") and not phone.startswith("91"):
-        await update.message.reply_text("❌ Only Indian numbers allowed")
-        return
+    user=query.from_user
 
-    users[str(user.id)] = {
+    users[str(user.id)]={
         "name":user.first_name,
         "username":user.username,
-        "phone":phone,
-        "verified":False,
-        "courses":[]
+        "courses":[],
+        "verified":True
     }
 
-    save_users(users)
+    save_json("users.json",users)
 
-    msg = f"""
-📩 NEW VERIFICATION REQUEST
+    log_event(f"User verified {user.id}")
 
-👤 Name: {user.first_name}
-🔗 Username: @{user.username}
-🆔 ID: {user.id}
-📱 Phone: {phone}
+    await query.message.reply_text("✅ Verification completed")
 
-Approve:
-/approve {user.id}
-"""
+# ---------- MY COURSES ----------
 
-    await context.bot.send_message(ADMIN_ID,msg)
+async def mycourses(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    query=update.callback_query
+    await query.answer()
+
+    uid=str(query.from_user.id)
+
+    if uid not in users:
+        await query.message.reply_text("No courses found")
+        return
+
+    course_list=users[uid]["courses"]
+
+    if not course_list:
+        await query.message.reply_text("No courses assigned")
+        return
+
+    keyboard=[]
+
+    for c in course_list:
+
+        if c in courses:
+
+            keyboard.append(
+                [InlineKeyboardButton(c,url=courses[c])]
+            )
+
+    await query.message.reply_text(
+        "📚 Your Courses",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ---------- PAYMENT ----------
+
+async def payment(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    query=update.callback_query
+    await query.answer()
+
+    await query.message.reply_text(
+        "💳 Payment Method\n\n"
+        "Amazon Pay Gift Card\n"
+        "PhonePe Gift Card\n\n"
+        "After purchase send screenshot/code here."
+    )
+
+# ---------- CONTACT PROFESSOR ----------
+
+async def contact(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    query=update.callback_query
+    await query.answer()
+
+    await query.message.reply_text(
+        "✉️ Drop a message here👇"
+    )
+
+    context.user_data["contact"]=True
+
+# ---------- USER MESSAGE ----------
+
+async def user_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    user=update.message.from_user
+
+    if context.user_data.get("contact"):
+
+        await context.bot.forward_message(
+            chat_id=PROFESSOR_ID,
+            from_chat_id=update.message.chat_id,
+            message_id=update.message.message_id
+        )                                                                                                                                                    	                                                                                                                                     	await update.message.reply_text("Message sent to Professor")
+
+        context.user_data["contact"]=False
+
+# ---------- PROFESSOR PANEL ----------
+
+async def panel(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    if update.message.from_user.id!=PROFESSOR_ID:
+        return
 
     await update.message.reply_text(
-        "✅ Phone received.\nVerification pending from Professor 🎓"
+        "🎓 Professor Panel\n\n"
+        "/setcourse name link\n"
+        "/addcourse user course\n"
+        "/users\n"
+        "/stats\n"
+        "/remove user"
     )
 
-# ---------- MENU ----------
+# ---------- SET COURSE ----------
 
-async def menu(update:Update,context:ContextTypes.DEFAULT_TYPE):
+async def setcourse(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    text = update.message.text
-    user = update.message.from_user.id
-
-    if text=="Join Backup Channel 📢":
-        await update.message.reply_text(
-            f"📢 Join mandatory backup channel first:\n{BACKUP_CHANNEL}"
-        )
-
-    elif text=="Available Courses 🧭":
-        await update.message.reply_text(
-            f"📚 Available Courses\n\nJoin info channel:\n{BACKUP_CHANNEL}"
-        )
-
-    elif text=="My Courses 📚":
-
-        uid=str(user)
-
-        if uid not in users:
-            await update.message.reply_text("❌ No course found")
-            return
-
-        courses = users[uid]["courses"]
-
-        if not courses:
-            await update.message.reply_text("📭 No course assigned yet")
-            return
-
-        text="🎓 Your Courses:\n\n"
-
-        for c in courses:
-            text+=f"📘 {c}\n"
-
-        await update.message.reply_text(text)
-
-    elif text=="Contact Professor 🎓":
-
-        waiting_message[user]=True
-
-        await update.message.reply_text(
-            "✉️ Drop a message here 👇\nProfessor will reply soon."
-        )
-
-    else:
-
-        if user in waiting_message:
-
-            await context.bot.send_message(
-                ADMIN_ID,
-                f"📩 Message for Professor\n\nUser ID:{user}\n\n{update.message.text}"
-            )
-
-            await update.message.reply_text(
-                "✅ Message delivered to Professor 🎓"
-            )
-
-            waiting_message.pop(user)
-
-# ---------- APPROVE ----------
-
-async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.message.from_user.id != ADMIN_ID:
+    if update.message.from_user.id!=PROFESSOR_ID:
         return
 
-    if len(context.args) == 0:
-        await update.message.reply_text("Usage: /approve USER_ID")
-        return
-
-    user_id = context.args[0]
-
-    if user_id not in users:
-        await update.message.reply_text("User not found")
-        return
-
-    users[user_id]["verified"] = True
-
-    save_users(users)
-
-    await context.bot.send_message(
-        chat_id=int(user_id),
-        text="🎉 Verification Approved\nProfessor will send your course link shortly."
-    )
-
-    await update.message.reply_text("✅ User approved successfully")
-
-# ---------- SEND LINK ----------
-
-async def sendlink(update:Update,context:ContextTypes.DEFAULT_TYPE):
-
-    if update.message.from_user.id!=ADMIN_ID:
-        return
-
-    user=context.args[0]
+    name=context.args[0]
     link=context.args[1]
 
-    await context.bot.send_message(
-        int(user),
-        f"🎓 Course Access Link:\n{link}"
-    )
+    courses[name]=link
+
+    save_json("courses.json",courses)
+
+    await update.message.reply_text("Course saved")
 
 # ---------- ADD COURSE ----------
 
 async def addcourse(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    if update.message.from_user.id!=ADMIN_ID:
+    if update.message.from_user.id!=PROFESSOR_ID:
         return
 
     user=context.args[0]
     course=" ".join(context.args[1:])
 
+    if user not in users:
+        await update.message.reply_text("User not found")
+        return
+
     users[user]["courses"].append(course)
 
-    save_users(users)
+    save_json("users.json",users)
 
-    await update.message.reply_text("✅ Course added")
+    await update.message.reply_text("Course assigned")
 
 # ---------- USERS ----------
 
-async def users_list(update:Update,context:ContextTypes.DEFAULT_TYPE):
+async def list_users(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    if update.message.from_user.id!=ADMIN_ID:
+    if update.message.from_user.id!=PROFESSOR_ID:
         return
 
-    text="👥 Students\n\n"
+    text="Users\n\n"
 
-    for uid in users:
-        text+=f"{users[uid]['name']} | {users[uid]['phone']}\n"
+    for u in users:
+        text+=f"{u} {users[u]['name']}\n"
 
     await update.message.reply_text(text)
 
@@ -226,76 +229,50 @@ async def users_list(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
 async def stats(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    if update.message.from_user.id!=ADMIN_ID:
+    if update.message.from_user.id!=PROFESSOR_ID:
         return
 
     total=len(users)
 
-    verified=0
-
-    for u in users:
-        if users[u]["verified"]:
-            verified+=1
-
     await update.message.reply_text(
-        f"📊 Stats\n\nUsers:{total}\nVerified:{verified}"
+        f"Bot Stats\nUsers:{total}\nCourses:{len(courses)}"
     )
 
-# ---------- BROADCAST ----------
+# ---------- REMOVE USER ----------
 
-async def broadcast(update:Update,context:ContextTypes.DEFAULT_TYPE):
+async def remove(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    if update.message.from_user.id!=ADMIN_ID:
+    if update.message.from_user.id!=PROFESSOR_ID:
         return
 
-    text=" ".join(context.args)
+    user=context.args[0]
 
-    for uid in users:
-        try:
-            await context.bot.send_message(uid,text)
-        except:
-            pass
+    if user in users:
+        users.pop(user)
 
-# ---------- ADMIN PANEL ----------
+    save_json("users.json",users)
 
-async def panel(update:Update,context:ContextTypes.DEFAULT_TYPE):
-
-    if update.message.from_user.id!=ADMIN_ID:
-        return
-
-    await update.message.reply_text(
-"""
-🎓 Professor Panel
-
-/approve USER_ID
-/sendlink USER_ID LINK
-/addcourse USER_ID COURSE
-
-/users
-/stats
-/broadcast MESSAGE
-/reject USER_ID
-/remove USER_ID
-/reply USER_ID MESSAGE
-"""
-)
+    await update.message.reply_text("User removed")
 
 # ---------- APP ----------
 
 app=ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start",start))
-app.add_handler(CommandHandler("approve",approve))
-app.add_handler(CommandHandler("sendlink",sendlink))
-app.add_handler(CommandHandler("addcourse",addcourse))
-app.add_handler(CommandHandler("users",users_list))
-app.add_handler(CommandHandler("stats",stats))
-app.add_handler(CommandHandler("broadcast",broadcast))
 app.add_handler(CommandHandler("panel",panel))
+app.add_handler(CommandHandler("setcourse",setcourse))
+app.add_handler(CommandHandler("addcourse",addcourse))
+app.add_handler(CommandHandler("users",list_users))
+app.add_handler(CommandHandler("stats",stats))
+app.add_handler(CommandHandler("remove",remove))
 
-app.add_handler(MessageHandler(filters.CONTACT,contact_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,menu))
+app.add_handler(CallbackQueryHandler(verify,pattern="verify"))
+app.add_handler(CallbackQueryHandler(mycourses,pattern="mycourses"))
+app.add_handler(CallbackQueryHandler(payment,pattern="payment"))
+app.add_handler(CallbackQueryHandler(contact,pattern="contact"))
 
-print("BOT RUNNING...")
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,user_message))
+
+print("BOT RUNNING")
 
 app.run_polling()
